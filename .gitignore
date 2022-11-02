@@ -1,0 +1,14 @@
+.bloop
+.idea
+.metals
+.vscode
+project
+target
+
+*.anno.json
+*.fir
+/*.v
+
+*.class
+*.log
+hs_err_pid*
