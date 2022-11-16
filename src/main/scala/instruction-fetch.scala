@@ -5,7 +5,7 @@ import chisel3.util.Valid
 
 class InstructionFetchUnit extends CModule {
   val io = IO(new Bundle {
-    val icache = new CacheInterface
+    val icache = new ReadOnlyCacheInterface
     val forcePc = Input(Valid(Address))
     val next = Output(Valid(RawInstructionWithPc))
   })
@@ -13,9 +13,6 @@ class InstructionFetchUnit extends CModule {
   val nextPc = Wire(Valid(Address))
   val lastPc = Reg(Address)
   lastPc := pc
-
-  io.icache.dataWrite <> DontCare
-  io.icache.writeEnable := false.B
 
   io.icache.address := pc
   io.icache.valid := !io.forcePc.valid

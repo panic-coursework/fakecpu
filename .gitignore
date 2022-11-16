@@ -9,6 +9,11 @@ target
 *.fir
 /*.v
 
+test_run_dir
+data.bin
+data.txt
+data.data
+
 *.class
 *.log
 hs_err_pid*
