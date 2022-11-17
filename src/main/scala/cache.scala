@@ -31,7 +31,6 @@ case class CacheParameters(
 class CacheLine(implicit cp: CacheParameters) extends CBundle {
   val valid = Bool()
   val tag = UInt(cp.tagBits.W)
-  val data = Vec(cp.nBytesInLine, Byte)
 }
 
 class CacheAddress(implicit cp: CacheParameters) extends CBundle {
@@ -55,17 +54,20 @@ class Cache(implicit cp: CacheParameters) extends CModule {
   if (!cp.readOnly) {
     throw new Exception("TODO")
   }
+  if (cp.nBytesInLine < p.wordSize) {
+    throw new Exception("Block size too small")
+  }
 
   val sets = Mem(cp.nLines, new CacheLine)
+  val data = Mem(cp.nLines * cp.nBytesInLine, Byte)
 
   val fetchProgress = RegInit(0.U(cp.blockBits.W))
   val lastProgress = CRegNext(fetchProgress)
 
   val addr = io.interface.address.asTypeOf(new CacheAddress)
   val lastIndex = CRegNext(addr.index)
-  val lastOffset = (0 until p.wordSize).map { (x: Int) => CRegNext(addr.offset + x.U) }.reverse
-  val lastLineRead = sets.read(lastIndex)
-  io.interface.dataRead := Cat(lastOffset.map { lastLineRead.data(_) })
+  val lastOffset = (0 until p.wordSize).map { (x: Int) => CRegNext(addr.index ## (addr.offset + x.U)) }.reverse
+  io.interface.dataRead := Cat(lastOffset.map { data.read(_) })
 
   val currentLineRead = sets.read(addr.index)
   io.interface.ready := currentLineRead.valid && currentLineRead.tag === addr.tag
@@ -100,7 +102,7 @@ class Cache(implicit cp: CacheParameters) extends CModule {
 
     when (lastRamReady) {
       printf(p"lastRamReady: $lastRamReady, prog: $lastProgress, resp: ${io.ram.resp}\n")
-      sets(lastIndex).data(lastProgress) := io.ram.resp
+      data.write(lastIndex ## lastProgress, io.ram.resp)
     }
   }.otherwise {
     io <> DontCare

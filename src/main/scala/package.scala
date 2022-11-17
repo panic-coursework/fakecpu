@@ -19,11 +19,14 @@ package object cpu {
   def Register = UInt(5.W)
 
   object InstructionType {
-    val arithmetic :: bitwise :: jump :: branch :: indirection :: Nil = Enum(5)
+    val arithmetic :: jump :: branch :: indirection :: csr :: unimp :: Nil = Enum(6)
+    val load = indirection
+    val store = indirection
     def T = chiselTypeOf(arithmetic)
   }
   // TODO
   def Instruction = new Bundle {
+    val pc = Address
     val itype = InstructionType.T
     val opcode = Opcode
     val rd = Register
@@ -31,10 +34,8 @@ package object cpu {
     val rs1 = Register
     val rs2 = Register
     val funct7 = Funct7
-    // immediate numbers
-    val immIS = UInt(12.W)
-    val immSB = UInt(13.W)
-    val immU = UInt(32.W)
-    val immUJ = UInt(21.W)
+    val immediate = SInt(32.W)
+    override def toString () =
+      s"pc: ${pc.litValue.toString(16)}, itype: ${itype.litValue}, opcode: ${opcode.litValue.toString(2)}, rd: ${rd.litValue}, funct3: ${funct3.litValue.toString(2)}, rs1: ${rs1.litValue}, rs2: ${rs2.litValue}, funct7: ${funct7.litValue.toString(2)}, imm: ${immediate.litValue.toString(16)}"
   }
 }

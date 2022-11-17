@@ -30,3 +30,11 @@ object CRegNext {
     reg
   }
 }
+
+object OutputReg {
+  def apply[T <: Data](out: T): T = {
+    val reg = Reg(chiselTypeOf(out))
+    out := reg
+    reg
+  }
+}
