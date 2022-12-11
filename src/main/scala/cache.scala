@@ -6,9 +6,7 @@ import chisel3.experimental.VecLiterals._
 import chisel3.util._
 
 class ReadOnlyCacheInterface extends CBundle {
-  val valid = Output(Bool())
-  val ready = Input(Bool())
-  val address = Output(Address)
+  val address = Decoupled(Address)
   val dataRead = Input(Word)
 }
 
@@ -40,7 +38,7 @@ class CacheAddress(implicit cp: CacheParameters) extends CBundle {
 }
 
 class Cache(implicit cp: CacheParameters) extends CModule {
-  val io = IO(new Bundle {
+  val io = IO(new CBundle {
     val interface = Flipped(if (cp.readOnly) {
       new ReadOnlyCacheInterface
     } else {
@@ -61,47 +59,58 @@ class Cache(implicit cp: CacheParameters) extends CModule {
   val sets = Mem(cp.nLines, new CacheLine)
   val data = Mem(cp.nLines * cp.nBytesInLine, Byte)
 
+  val idle :: fetching :: Nil = Enum(2)
+  val state = RegInit(idle)
+
   val fetchProgress = RegInit(0.U(cp.blockBits.W))
   val lastProgress = CRegNext(fetchProgress)
 
-  val addr = io.interface.address.asTypeOf(new CacheAddress)
+  val addr = io.interface.address.bits.asTypeOf(new CacheAddress)
   val lastIndex = CRegNext(addr.index)
-  val lastOffset = (0 until p.wordSize).map { (x: Int) => CRegNext(addr.index ## (addr.offset + x.U)) }.reverse
-  io.interface.dataRead := Cat(lastOffset.map { data.read(_) })
+  val lastAddr = CRegNext(io.interface.address.bits)
+  val offset = (0 until p.wordSize).map { (x: Int) => addr.index ## (addr.offset + x.U) }.reverse
+  io.interface.dataRead := Cat(offset.map { data.read(_) })
 
-  val currentLineRead = sets.read(addr.index)
-  io.interface.ready := currentLineRead.valid && currentLineRead.tag === addr.tag
+  val currentLine = sets(addr.index)
+  val cacheHit = currentLine.valid && currentLine.tag === addr.tag
+  io.interface.address.ready := cacheHit
 
-  val lastRamReady = CRegNext(io.ram.req.valid && io.ram.req.ready)
+  val clearProgress = state === idle || io.interface.address.bits =/= lastAddr
 
   when (ready) {
-    when (io.interface.valid && !io.interface.ready) {
+    when (io.interface.address.valid && !cacheHit) {
       // cache miss
+      when (clearProgress) {
+        currentLine.valid := false.B
+        currentLine.tag := addr.tag
+        state := fetching
+        fetchProgress := 0.U
+      }
+
       val readAddr = Wire(new CacheAddress)
       readAddr.tag := addr.tag
       readAddr.index := addr.index
-      readAddr.offset := fetchProgress
+      val readOffset = Mux(clearProgress, 0.U, fetchProgress)
+      lastProgress := readOffset
+      readAddr.offset := readOffset
       val req = Wire(new RamRequest)
       req.read(readAddr.asUInt)
       io.ram.req.enq(req)
 
       when (io.ram.req.ready) {
-        when (fetchProgress === (cp.nBytesInLine - 1).U) {
+        when (fetchProgress === (cp.nBytesInLine - 1).U && !clearProgress) {
           // TODO: we could save a cycle here
-          val currentLine = sets(addr.index)
           currentLine.valid := true.B
-          currentLine.tag := addr.tag
-          fetchProgress := 0.U
         }.otherwise {
-          fetchProgress := fetchProgress + 1.U
+          fetchProgress := readOffset + 1.U
         }
       }
     }.otherwise {
       io.ram.req.noenq()
     }
 
-    when (lastRamReady) {
-      printf(p"lastRamReady: $lastRamReady, prog: $lastProgress, resp: ${io.ram.resp}\n")
+    when (CRegNext(io.ram.req.fire)) {
+      dprintf(p"prog: $lastProgress, resp: ${io.ram.resp}\n")
       data.write(lastIndex ## lastProgress, io.ram.resp)
     }
   }.otherwise {

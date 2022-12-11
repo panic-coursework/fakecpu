@@ -8,22 +8,52 @@ import chiseltest.RawTester.test
 import chisel3.stage.ChiselStage
 
 class TestModule extends CModule {
-  val io = IO(Output(Valid(Instruction)))
+  val io = IO(new CBundle {
+    val pc = Output(Address)
+    val halt = Output(Bool())
+  })
   val cpu = CModule(new Cpu)
   val ram = CModule(new Ram(128 * 1024 * 1024, Some("data.data")))
-  cpu.io.ram <> ram.io
+  val iommu = CModule(new Iommu)
+  io.halt := iommu.io.halt
+  cpu.io.ram <> iommu.io.cpu
+  ram.io <> iommu.io.ram
   cpu.io.ioBufferFull := false.B
-  io <> cpu.io.dbg
+  io.pc := cpu.io.pc
+}
+
+class Poc extends Module {
+  val io = IO(new Bundle {
+    val sel = Input(UInt(1.W))
+    val en = Input(Bool())
+    val value = Output(Valid(UInt(1.W)))
+  })
+  // Valid: { valid, bits }
+  val mem = Mem(2, Valid(UInt(1.W)))
+  val readwriter1 = mem(0.U)
+  val readwriter2 = mem(readwriter1.bits)
+  io.value.valid := readwriter2.valid
+  io.value.bits := readwriter2.bits
+  when (io.en) {
+    readwriter1.valid := true.B
+    readwriter2.valid := false.B
+  }
 }
 
 object Main extends App {
-  test (new TestModule, Seq(VerilatorBackendAnnotation)) { c =>
+  (new ChiselStage).emitVerilog(new Poc)
+  // (new ChiselStage).emitFirrtl(new TestModule, Array("-X", "low"))
+  test (new TestModule, Seq(VerilatorBackendAnnotation, WriteVcdAnnotation)) { c =>
     c.clock.setTimeout(0)
-    c.ready.poke(true.B)
-    for (i <- 0 until 1024) {
-      println(s"Cycle $i: Valid? ${c.io.valid.peek().litValue}, Inst: ${c.io.bits.peek()}")
+    c.reset.poke(true.B)
+    c.clock.step(2)
+    c.reset.poke(false.B)
+    var cycle = 0
+    while (!c.io.halt.peek().litToBoolean) {
       c.clock.step(1)
+      c.ready.poke(true.B)
+      cycle += 1
+      if (cycle > 1060) throw new Exception
     }
   }
-  // (new ChiselStage).emitVerilog(new Cpu)
 }
