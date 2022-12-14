@@ -31,6 +31,7 @@ class RegisterFile extends CModule {
     val query = Vec(p.reg.query.lines, new RegQuery)
     val borrow = Input(CValid(new RegBorrow))
     val update = Input(CValid(new RegUpdate))
+    val clear = Input(Bool())
   })
 
   val regs = Mem(p.reg.count, new Register)
@@ -48,45 +49,47 @@ class RegisterFile extends CModule {
     ))
   }
 
+  val ramAccessors = (0 until p.reg.count).map(regs(_))
+
   when (reset.asBool) {
-    for (i <- 0 until p.reg.count) {
-      val reg = regs(i)
+    for (reg <- ramAccessors) {
       reg.valid := true.B
       reg.src := 0.U
       reg.value := 0.U
     }
   }
 
-  when (ready) {
-    when (io.update.valid) {
-      val data = io.update.bits
-      when (data.id =/= 0.U) {
-        if (p.isFirrtlBuggy) {
-          val reg = WireDefault(regs(data.id))
-          reg.value := data.value
-          reg.valid := data.rob === reg.src
-          regs.write(data.id, reg)
-        } else {
-          val reg = regs(data.id)
-          reg.value := data.value
-          reg.valid := data.rob === reg.src
+  when (ready && io.update.valid) {
+    val data = io.update.bits
+    when (data.id =/= 0.U) {
+      if (p.isFirrtlBuggy) {
+        val reg = WireDefault(regs(data.id))
+        val wr = regs(data.id)
+        wr.value := data.value
+        when (!io.borrow.valid || io.borrow.bits.id =/= data.id) {
+          wr.valid := data.rob === reg.src || io.clear
+        }
+      } else {
+        val reg = regs(data.id)
+        reg.value := data.value
+        when (!io.borrow.valid || io.borrow.bits.id =/= data.id) {
+          reg.valid := data.rob === reg.src || io.clear
         }
       }
     }
+  }
 
+  when (ready && io.clear) {
+    ramAccessors.foreach(_.valid := true.B)
+  }
+
+  when (ready && !io.clear) {
     when (io.borrow.valid) {
       val data = io.borrow.bits
       when (data.id =/= 0.U) {
-        if (p.isFirrtlBuggy) {
-          val reg = WireDefault(regs(data.id))
-          reg.valid := false.B
-          reg.src := data.src
-          regs.write(data.id, reg)
-        } else {
-          val reg = regs(data.id)
-          reg.valid := false.B
-          reg.src := data.src
-        }
+        val reg = regs(data.id)
+        reg.valid := false.B
+        reg.src := data.src
       }
     }
   }.otherwise {

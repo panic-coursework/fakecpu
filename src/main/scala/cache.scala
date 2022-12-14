@@ -98,8 +98,7 @@ class Cache(implicit cp: CacheParameters) extends CModule {
       io.ram.req.enq(req)
 
       when (io.ram.req.ready) {
-        when (fetchProgress === (cp.nBytesInLine - 1).U && !clearProgress) {
-          // TODO: we could save a cycle here
+        when (lastProgress === (cp.nBytesInLine - 1).U && !clearProgress) {
           currentLine.valid := true.B
         }.otherwise {
           fetchProgress := readOffset + 1.U
@@ -110,7 +109,7 @@ class Cache(implicit cp: CacheParameters) extends CModule {
     }
 
     when (CRegNext(io.ram.req.fire)) {
-      dprintf(p"prog: $lastProgress, resp: ${io.ram.resp}\n")
+      dprintf("cache", p"progress: $lastProgress, resp: ${io.ram.resp}")
       data.write(lastIndex ## lastProgress, io.ram.resp)
     }
   }.otherwise {

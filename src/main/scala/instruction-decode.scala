@@ -20,10 +20,9 @@ class InstructionDecoder extends CModule {
 
   val ins = io.input.bits.instruction
   val rs = OutputReg(io.rs.bits)
-  val rsValid = OutputReg(io.rs.valid)
   val rob = OutputReg(io.rob.bits)
-  val robValid = OutputReg(io.rob.valid)
   val robId = Mux(io.rob.fire, io.robEnqPtr + 1.U, io.robEnqPtr)
+  val opRsValid = RegInit(true.B)
 
   when (ready) {
     io.input.ready := io.rs.ready && io.rob.ready
@@ -31,10 +30,25 @@ class InstructionDecoder extends CModule {
     io.regBorrow.valid := false.B
     io.regBorrow.bits := DontCare
 
-    // TODO: cond?
     val fire = io.input.fire
-    rsValid := fire
-    robValid := fire
+    val lastInputValid = CRegNext(io.input.valid)
+    io.rs.valid := lastInputValid && io.rob.ready && opRsValid
+    io.rob.valid := lastInputValid && io.rs.ready
+
+    when (lastInputValid && opRsValid && !io.input.ready) {
+      for (i <- 0 until p.cdb.lines) {
+        val line = io.cdb(i)
+        when (line.valid) {
+          List(rs.value1, rs.value2).foreach { reg =>
+            when (!reg.valid && reg.src === line.bits.id) {
+              reg.valid := true.B
+              reg.value := line.bits.value
+            }
+          }
+        }
+      }
+    }
+
     when (fire) {
       val opcode = ins(6, 0)
       val rd = ins(11, 7)
@@ -64,10 +78,15 @@ class InstructionDecoder extends CModule {
       val destValid = Wire(Bool())
       val robOp = Wire(RobOp.T)
 
+      opRsValid := true.B
       rs.op := Mux(
         opcode === OP_IMM && funct3 =/= "b001".U && funct3 =/= "b101".U,
         0.U(2.W),
-        funct7(6, 5),
+        Mux(
+          opcode === BRANCH,
+          "b10".U(2.W),
+          funct7(6, 5),
+        ),
       ) ## funct3
       rs.size   := funct3
       rs.dest   := robId
@@ -108,7 +127,7 @@ class InstructionDecoder extends CModule {
         rs.value2.valid := true.B
         rs.value2.value := immI.asUInt
       }.elsewhen (opcode === LUI || opcode === AUIPC || opcode === JAL) {
-        rsValid := false.B
+        opRsValid := false.B
 
         robOp := RobOp.reg
         rob.value.valid := true.B

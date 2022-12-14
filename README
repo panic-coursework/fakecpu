@@ -1,0 +1,50 @@
++-----------------------+
+| HOW TO RUN SIMULATION |
++-----------------------+
+
+There are two ways to run simulation: using chiseltest, the built-in testing
+method for Chisel; or using Verilator (or some other verilog simulation tool)
+to run simulation manually.
+
+You will need sbt, the Scala build tool, to compile the code. Before
+simulating, please edit config.scala to make sure flags are set properly. You
+will need to place the machine code to run in hexadecimal format on a file
+named "data.data" in the current working directory. Input is read from
+"infile.data" under cwd, also in hexadecimal format. These files are
+configurable from main.scala.
+
+To run simulation using chiseltest:
+
+1. You need to have Verilator installed.
+2. Set mode to "test" in config.scala.
+3. Run the test using the command "sbt run".
+
+To run simulation manually:
+
+1. Set mode to "codegen" in config.scala and make sure codegen.module is
+   "new TestModule" (not "new Cpu").
+2. Generate Verilog code using the command "sbt run".
+3. Copy src/main/resources/testbench.v to the current directory.
+4. Run the simulation tool using testbench.v as the top module. For example,
+   using Verilator, you can use the following commands to run simulation:
+       verilator testbench.v --binary --timing -j $(nproc) --threads $(nproc) -Wno-UNOPTTHREADS -O3
+       ./obj_dir/Vtestbench
+
+If you want to play with the code, it is recommended that you spin up a sbt
+daemon by running "sbt" and type in "run" each time you modify the code,
+instead of running "sbt run" each time to take full advantage of incremental
+compilation provided by sbt.
+
+
++----------------------+
+| HOW TO RUN SYNTHESIS |
++----------------------+
+
+1. Make sure Vivado is installed.
+2. Create a new project in Vivado.
+3. Set mode to "codegen" in config.scala and make sure codegen.module is
+   "new Cpu" (not "new TestModule").
+4. Generate Verilog code using the command "sbt run".
+5. Copy the Verilog files in src/main/resources EXCEPT testbench.v, as well as
+   Cpu.v generated in step 4, to the Vivado project you have just created.
+6. Run synthesis in Vivado.

@@ -25,9 +25,10 @@ class RsUnitEnqueue extends CBundle {
 }
 
 class LoadBufferQuery extends CBundle {
+  val id = Input(RobId)
   val addr = Input(Address)
   val size = Input(LoadStoreSize.T)
-  val block = Output(Bool())
+  val block = Output(CValid(RobId))
 }
 
 trait HasRegisters extends Data {
@@ -54,12 +55,14 @@ class LoadBuffer extends CBundle with HasRegisters {
   val size = LoadStoreSize.T
   val dest = RobId
   val offset = Address
+  val blocked = CValid(RobId)
   def valueRecords: List[Register] = List(addr)
   def enq (bits: RsUnitEnqueue): Unit = {
     size := bits.size
     addr := bits.value1
     dest := bits.dest
     offset := bits.offset
+    blocked.valid := false.B
   }
 }
 
@@ -88,6 +91,9 @@ class RsQueue[T <: HasRegisters](w: Int, gen: T) extends CModule {
     val cdb = Input(CdbReceiver)
     val enq = Flipped(Decoupled(gen))
     val deq = Decoupled(gen)
+    val robDeq = Input(RobId)
+    val lbBlock = if (gen.isInstanceOf[LoadBuffer]) Some(Input(CValid(RobId))) else None
+    val lbUnblock = if (gen.isInstanceOf[LoadBuffer]) Some(Input(Vec(2, CValid(RobId)))) else None
   })
 
   val entries = 1 << w
@@ -119,7 +125,7 @@ class RsQueue[T <: HasRegisters](w: Int, gen: T) extends CModule {
           when (line.valid) {
             line.bits.valueRecords.foreach { rec =>
               when (!rec.valid && rec.src === cdb.bits.id) {
-                dprintf(p"[rs] cdb match ${cdb.bits} with rs line $lineId\n")
+                dprintf("rs", p"cdb match ${cdb.bits} with rs line $lineId")
                 rec.valid := true.B
                 rec.value := cdb.bits.value
               }
@@ -129,17 +135,21 @@ class RsQueue[T <: HasRegisters](w: Int, gen: T) extends CModule {
       }
     }
 
-    def ready (valid: Bool, bits: UInt): CValid[UInt] = {
-      val v = Wire(CValid(UInt(w.W)))
-      v.valid := valid
-      v.bits := bits
-      v
-    }
-
     val readyId = MuxCase(
-      ready(false.B, 0.U),
+      CValid.bind(false.B, 0.U(w.W)),
       ramAccessors.zipWithIndex.map { line =>
-        (line._1.valid & line._1.bits.valueRecords.map { _.valid }.reduceLeft(_ & _)) -> ready(true.B, line._2.U)
+        (
+          line._1.valid &
+          line._1.bits.valueRecords.map { _.valid }.reduceLeft(_ & _) &
+          (if (gen.isInstanceOf[LoadBuffer]) {
+            val lb = line._1.bits.asInstanceOf[LoadBuffer]
+            // virtual loads must be in-order
+            val virtualValid = lb.addr.value < p.iommu.base.U || lb.dest === io.robDeq
+            // prevention of dead loops
+            val notBlocked = !lb.blocked.valid
+            virtualValid && notBlocked
+          } else true.B)
+        ) -> CValid.bind(true.B, line._2.U(w.W))
       },
     )
     val deqLine = ram(readyId.bits)
@@ -148,13 +158,34 @@ class RsQueue[T <: HasRegisters](w: Int, gen: T) extends CModule {
     free.io.enq.valid := io.deq.fire
     free.io.enq.bits := readyId.bits
     when (io.deq.fire) {
-      dprintf(p"[rs] deq from ${readyId.bits}, content ${deqLine.bits}\n")
+      dprintf("rs", p"deq from ${readyId.bits}, content ${deqLine.bits}")
       deqLine.valid := false.B
+    }
+    io.lbBlock.map { block =>
+      val unblocks = (0 to 1).map(io.lbUnblock.get(_))
+      when (io.deq.valid && unblocks.map(u => !u.valid || u.bits =/= block.bits).reduce(_ && _)) {
+        dprintf("lb", p"block $block to ${deqLine.bits}")
+        deqLine.bits.asInstanceOf[LoadBuffer].blocked := block
+      }
+    }
+    io.lbUnblock.map { unblock =>
+      for (i <- 0 to 1) {
+        val line = unblock(i)
+        when (line.valid) {
+          ramAccessors.foreach { accessor =>
+            val block = accessor.bits.asInstanceOf[LoadBuffer].blocked
+            when (block.bits === line.bits) {
+              dprintf("lb", p"unblock $block in ${accessor.bits}")
+              block.valid := false.B
+            }
+          }
+        }
+      }
     }
 
     when (io.enq.fire) {
       val ix = free.io.deq.bits
-      dprintf(p"[rs] enq to $ix, content ${io.enq.bits}\n")
+      dprintf("rs", p"enq to $ix, content ${io.enq.bits}")
       val accessor = ram(ix)
       accessor.bits := io.enq.bits
       accessor.valid := true.B
@@ -176,16 +207,20 @@ class RsUnit extends CModule {
     val sb = Output(CValid(new StoreBufferWrite))
 
     val lbQuery = Flipped(new LoadBufferQuery)
+    val robDeq = Input(RobId)
+    val lbUnblock = Input(CValid(RobId))
   })
 
   val alu = CModule(new RsQueue(p.rsWidth, new ReservationStationAlu))
   val lb = CModule(new RsQueue(p.loadBufferWidth, new LoadBuffer))
   val sb = CModule(new RsQueue(p.storeBufferWidth, new StoreBuffer))
+  lb.io.lbUnblock.map(_(0) := io.lbUnblock)
   Seq(alu, lb, sb).foreach { q =>
-    q.reset := reset.asBool || io.clear
+    q.reset        := reset.asBool || io.clear
     q.io.enq.valid := false.B
-    q.io.enq.bits := DontCare
-    q.io.cdb <> io.cdb
+    q.io.enq.bits  := DontCare
+    q.io.cdb       := io.cdb
+    q.io.robDeq    := io.robDeq
   }
 
   val types = Seq(
@@ -232,6 +267,8 @@ class RsUnit extends CModule {
       io.lb.bits := DontCare
       io.lbQuery <> DontCare
       types.foreach(_._2.io.deq.ready := false.B)
+      lb.io.lbBlock.get := lb.io.deq.bits.blocked
+      lb.io.lbUnblock.get(1) := CValid.bind(false.B, 0.U(p.robWidth.W))
     }.otherwise {
       alu.io.deq.ready := true.B
       io.alu.valid := alu.io.deq.valid
@@ -249,6 +286,11 @@ class RsUnit extends CModule {
       sbOut.id    := sbDeq.dest
       sbOut.addr  := sbDeq.addr.value + sbDeq.offset
       sbOut.value := sbDeq.value.value
+      lb.io.lbUnblock.map { unblock =>
+        val line = unblock(1)
+        line.valid := sb.io.deq.fire
+        line.bits := sbDeq.dest
+      }
 
       val lbOut = io.lb.bits
       val lbDeq = lb.io.deq.bits
@@ -259,10 +301,12 @@ class RsUnit extends CModule {
       lbOut.rob     := lbDeq.dest
       lbOut.cleared := false.B
       lbOut.value   := DontCare
+      io.lbQuery.id   := lbDeq.dest
       io.lbQuery.addr := lbAddr
       io.lbQuery.size := lbDeq.size
-      lb.io.deq.ready := io.lb.ready && !io.lbQuery.block
-      io.lb.valid := lb.io.deq.valid && !io.lbQuery.block
+      lb.io.deq.ready := io.lb.ready && !io.lbQuery.block.bits
+      io.lb.valid := lb.io.deq.valid && !io.lbQuery.block.bits
+      lb.io.lbBlock.get := io.lbQuery.block
     }
   }.otherwise {
     io <> DontCare

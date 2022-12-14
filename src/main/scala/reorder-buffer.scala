@@ -55,13 +55,15 @@ class ReorderBuffer extends CModule {
     val enq = Flipped(Decoupled(new RobEnqueue))
     val cdb = Input(CdbReceiver)
     val clear = Output(CValid(Address))
-    val enqPtr = Output(UInt(p.robWidth.W))
+    val enqPtr = Output(RobId)
+    val deqPtr = Output(RobId)
 
     val setReg = Output(CValid(new RegUpdate))
     val bpFeedback = Output(CValid(new BpFeedback))
     val lsqEnq = Decoupled(new LsQueuePayload)
 
     val lbQuery = new LoadBufferQuery
+    val lbUnblock = Output(CValid(RobId))
     val sbWrite = Input(CValid(new StoreBufferWrite))
     val decodeQuery = Vec(p.robQueryLines, new RobQuery)
   })
@@ -76,18 +78,22 @@ class ReorderBuffer extends CModule {
     enqPtr := enq_ptr.value
     deqPtr := deq_ptr.value
 
-    lbQuery.block := (0 until p.robLines).map { i: Int =>
-      // TODO: check the enqueuing line
+    // register file may become corrupt on rob pointers match (and there are no good alternative
+    // fixes that I could think of), so leave out some space
+    io.enq.ready := enq_ptr.value + 1.U =/= deq_ptr.value
+
+    lbQuery.block := MuxCase(CValid.bind(false.B, 0.U(p.robWidth.W)), (0 until p.robLines).map { i: Int =>
       val notInQueue = empty || (!full && Mux(
         enq_ptr.value > deq_ptr.value,
         i.U >= enq_ptr.value || i.U < deq_ptr.value,
         i.U >= enq_ptr.value && i.U < deq_ptr.value,
       ))
+      val afterQuery = (i.U - deq_ptr.value) >= (lbQuery.id - deq_ptr.value)
       val line = ram(i)
       val notStore = line.op =/= RobOp.store
       val notOverlapping = line.addr.valid && !overlap(lbQuery.addr, lbQuery.size, line.addr.bits, line.size)
-      notInQueue || notStore || notOverlapping
-    }.reduceLeft(_ & _)
+      !(notInQueue || afterQuery || notStore || notOverlapping) -> CValid.bind(true.B, i.U(p.robWidth.W))
+    })
 
     when (ready && sbWrite.fire) {
       val line = ram(sbWrite.bits.id)
@@ -129,8 +135,11 @@ class ReorderBuffer extends CModule {
   io.lbQuery <> buffer.lbQuery
   io.decodeQuery <> buffer.decodeQuery
   io.enqPtr <> buffer.enqPtr
+  io.deqPtr <> buffer.deqPtr
   io.sbWrite <> buffer.sbWrite
   io.cdb <> buffer.update
+  io.lbUnblock.valid := false.B
+  io.lbUnblock.bits  := DontCare
 
   val clear = OutputRegInit(io.clear, CValid(Address).Lit(_.valid -> false.B, _.bits -> 0.U))
   val setReg = OutputReg(io.setReg)
@@ -144,8 +153,11 @@ class ReorderBuffer extends CModule {
     setReg.bits := DontCare
     bpFeedback.valid := false.B
     bpFeedback.bits := DontCare
-    lsqEnqValid := false.B
-    lsqEnq := DontCare
+    when (io.lsqEnq.fire) {
+      lsqEnqValid := false.B
+      lsqEnq := DontCare
+    }
+    clear.valid := false.B
 
     when (!clear.valid) {
       val enq = Wire(new RobLine)
@@ -167,7 +179,7 @@ class ReorderBuffer extends CModule {
       enq.valid         := true.B
 
       when (buffer.io.enq.fire) {
-        dprintf(p"[rob] enq ptr ${io.enqPtr}, content $enq\n")
+        dprintf("rob", p"enq ptr ${io.enqPtr}, content $enq")
       }
 
       commit()
@@ -185,9 +197,9 @@ class ReorderBuffer extends CModule {
     val line = buffer.io.deq.bits
     buffer.io.deq.ready := line.value.valid &&
       ((line.op =/= RobOp.store && line.op =/= RobOp.jalr) || line.addr.valid) &&
-      (line.op =/= RobOp.store || io.lsqEnq.ready)
+      (!lsqEnqValid || io.lsqEnq.ready)
     when (buffer.io.deq.fire) {
-      dprintf(p"[commit] line: $line\n")
+      dprintf("commit", p"id: ${buffer.deqPtr}, line: $line")
       when (line.op === RobOp.branch || line.op === RobOp.jalr) {
         // JAL / JALR
         when (line.dest.valid) {
@@ -199,7 +211,7 @@ class ReorderBuffer extends CModule {
         val altAddr = Mux(
           line.op === RobOp.branch,
           line.fallback,
-          line.addr.bits & ~1.U,
+          alignPc(line.addr.bits),
         )
         val mispredicted = Mux(
           line.op === RobOp.branch,
@@ -213,7 +225,7 @@ class ReorderBuffer extends CModule {
           bpFeedback.bits.history       := line.history
         }
         when (mispredicted) {
-          // TODO: log
+          dprintf("rob", "branch mispredicted, clearing pipeline in favor of %x", altAddr);
           clear.valid := true.B
           clear.bits := altAddr
         }
@@ -233,6 +245,9 @@ class ReorderBuffer extends CModule {
         lsq.rob     := DontCare
         lsq.cleared := DontCare
         lsq.value   := line.value.bits
+
+        io.lbUnblock.valid := true.B
+        io.lbUnblock.bits  := buffer.deqPtr
       }
       when (line.op === RobOp.unimp) {
         // unreachable

@@ -9,11 +9,14 @@ target
 *.anno.json
 *.fir
 /*.v
+*.vcd
 
+obj_dir
 test_run_dir
 data.bin
 data.txt
 data.data
+infile.data
 
 *.class
 *.log

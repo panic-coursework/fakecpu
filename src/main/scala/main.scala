@@ -9,17 +9,17 @@ import chisel3.stage.ChiselStage
 
 class TestModule extends CModule {
   val io = IO(new CBundle {
-    val pc = Output(Address)
     val halt = Output(Bool())
+    val pc = if (p.debug.enable) Some(Output(Address)) else None
   })
   val cpu = CModule(new Cpu)
-  val ram = CModule(new Ram(128 * 1024 * 1024, Some("data.data")))
-  val iommu = CModule(new Iommu)
+  val ram = CModule(new Ram(128 * 1024, Some("data.data")))
+  val iommu = CModule(new Iommu(Some("infile.data")))
   io.halt := iommu.io.halt
   cpu.io.ram <> iommu.io.cpu
   ram.io <> iommu.io.ram
   cpu.io.ioBufferFull := false.B
-  io.pc := cpu.io.pc
+  io.pc.map(_ := cpu.io.pc.get)
 }
 
 class Poc extends Module {
@@ -42,18 +42,28 @@ class Poc extends Module {
 
 object Main extends App {
   (new ChiselStage).emitVerilog(new Poc)
-  // (new ChiselStage).emitFirrtl(new TestModule, Array("-X", "low"))
-  test (new TestModule, Seq(VerilatorBackendAnnotation, WriteVcdAnnotation)) { c =>
-    c.clock.setTimeout(0)
-    c.reset.poke(true.B)
-    c.clock.step(2)
-    c.reset.poke(false.B)
-    var cycle = 0
-    while (!c.io.halt.peek().litToBoolean) {
-      c.clock.step(1)
-      c.ready.poke(true.B)
-      cycle += 1
-      if (cycle > 1060) throw new Exception
-    }
+  p.mode match {
+    case "codegen" =>
+      (new ChiselStage).emitVerilog(p.codegen.module, p.codegen.options)
+
+    case "test" =>
+      test (new TestModule, Seq(VerilatorBackendAnnotation, WriteVcdAnnotation)) { c =>
+        c.clock.setTimeout(0)
+        c.reset.poke(true.B)
+        c.clock.step(2)
+        c.reset.poke(false.B)
+        var cycle = 0
+        while (!c.io.halt.peek().litToBoolean) {
+          c.clock.step(1)
+          c.ready.poke(true.B)
+          cycle += 1
+          if (cycle > 100000) {
+            throw new Exception("CPU not finishing on time")
+          }
+        }
+      }
+
+    case _ =>
+      throw new Exception(f"Unknown run mode ${p.mode}")
   }
 }

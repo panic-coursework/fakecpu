@@ -10,21 +10,26 @@ class CdbMessage extends CBundle {
 
 class Cpu extends CModule {
   val io = IO(new CBundle {
-    val ram = Flipped(new RamIo())
+    val ram = Flipped(new RamIo)
     val ioBufferFull = Input(Bool())
-    val pc = Output(Address)
+    val debugReg = Output(Word)
+    val pc = if (p.debug.enable) Some(Output(Address)) else None
   })
   val cdb = Wire(CdbReceiver)
   val clear = Wire(CValid(Address))
   val clearFlag = clear.valid
+
+  // not used
+  io.debugReg := 0.U
 
   val ramCtrl = CModule(new RamController)
   ramCtrl.io.ram <> io.ram
   ramCtrl.io.ioBufferFull := io.ioBufferFull
 
   val regfile = CModule(new RegisterFile)
+  regfile.io.clear := clearFlag
 
-  val icache = CModule(new Cache()(new CacheParameters(1, 6, 6, true)))
+  val icache = CModule(new Cache()(p.icache))
   ramCtrl.io.instruction <> icache.io.ram
 
   val bp = CModule(new BranchPredictor)
@@ -34,15 +39,15 @@ class Cpu extends CModule {
   ifetch.io.icache   <> icache.io.interface
   ifetch.io.regQuery <> regfile.io.query(p.reg.query.ifetch)
   ifetch.io.bpQuery  <> bp.io.query
-  ifetch.io.pc       <> io.pc
+  ifetch.io.pc.map(_ <> io.pc.get)
 
   val alu = CModule(new ArithmeticLogicUnit)
   cdb(p.cdb.alu) := alu.io.resp
 
   val lsq = CModule(new LoadStoreQueue)
-  lsq.io.clear    := clearFlag
-  cdb(p.cdb.lsq)  := lsq.io.broadcast
-  ramCtrl.io.data <> lsq.io.ram
+  lsq.io.clear   := clearFlag
+  lsq.io.ram     <> ramCtrl.io.data
+  cdb(p.cdb.lsq) := lsq.io.broadcast
 
   val rob = CModule(new ReorderBuffer)
   clear := rob.io.clear
@@ -52,12 +57,14 @@ class Cpu extends CModule {
   rob.io.lsqEnq     <> lsq.io.enq(p.lsq.enq.rob)
 
   val rs = CModule(new RsUnit)
-  rs.io.cdb     := cdb
-  rs.io.clear   := clearFlag
-  rs.io.alu     <> alu.io.req
-  rs.io.sb      <> rob.io.sbWrite
-  rs.io.lb      <> lsq.io.enq(p.lsq.enq.rs)
-  rs.io.lbQuery <> rob.io.lbQuery
+  rs.io.cdb       := cdb
+  rs.io.clear     := clearFlag
+  rs.io.alu       <> alu.io.req
+  rs.io.sb        <> rob.io.sbWrite
+  rs.io.lb        <> lsq.io.enq(p.lsq.enq.rs)
+  rs.io.lbQuery   <> rob.io.lbQuery
+  rs.io.robDeq    := rob.io.deqPtr
+  rs.io.lbUnblock := rob.io.lbUnblock
 
   val idecode = CModule(new InstructionDecoder)
   idecode.io.input       <> ifetch.io.next
@@ -69,4 +76,13 @@ class Cpu extends CModule {
   idecode.io.regQuery(0) <> regfile.io.query(p.reg.query.idecode0)
   idecode.io.regQuery(1) <> regfile.io.query(p.reg.query.idecode1)
   idecode.io.regBorrow   <> regfile.io.borrow
+
+  when (ready) {
+    for (i <- 0 until p.cdb.lines) {
+      val line = cdb(i)
+      when (line.valid) {
+        dprintf("cdb", p"broadcast on line $i: ${line.bits}")
+      }
+    }
+  }
 }

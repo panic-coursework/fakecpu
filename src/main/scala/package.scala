@@ -38,14 +38,18 @@ package object cpu {
     sameAddr || overlap
   }
 
-  def dprintf (fmt: String, data: Bits*) = {
-    if (p.debug) {
-      printf(fmt, data: _*)
+  def alignPc (pc: UInt) = pc & ~(1.U(p.xlen.W))
+
+  def alignUnit (unit: String) =
+    "[" + unit.padTo(p.debug.units.map(_._1.length).max, ' ') + "] "
+  def dprintf (unit: String, fmt: String, data: Bits*): Unit = {
+    if (p.debug.enable && p.debug.units(unit)) {
+      printf(f"${alignUnit(unit)}$fmt\n", data: _*)
     }
   }
-  def dprintf (pable: Printable) = {
-    if (p.debug) {
-      printf(pable)
+  def dprintf (unit: String, pable: Printable): Unit = {
+    if (p.debug.enable && p.debug.units(unit)) {
+      printf(p"${alignUnit(unit)}$pable\n")
     }
   }
 }

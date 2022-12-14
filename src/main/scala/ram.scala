@@ -43,18 +43,13 @@ class RamController extends CModule {
     arbiter.io.in(i) <> iface.req
     iface.resp := io.ram.dataOut
   }
-  arbiter.io.out.ready := true.B
+  val virtual = arbiter.io.out.bits.dataIn >= p.iommu.base.U
+  arbiter.io.out.ready := !virtual || (!io.ioBufferFull && CRegNext(virtual))
   val req = arbiter.io.out.bits
-  val valid = arbiter.io.out.valid
-  io.ram.dataIn := Mux(valid, req.dataIn, 0.U)
-  io.ram.address := Mux(valid, req.address, 0.U)
-  io.ram.writeEnable := Mux(valid, req.writeEnable, false.B)
-
-  when (ready) {
-    when (io.ioBufferFull) {
-      // TODO
-    }
-  }
+  val fire = arbiter.io.out.fire
+  io.ram.dataIn := Mux(fire, req.dataIn, 0.U)
+  io.ram.address := Mux(fire, req.address, 0.U)
+  io.ram.writeEnable := Mux(fire, req.writeEnable, false.B)
 }
 
 class Ram (size: Int, filename: Option[String]) extends CModule {
@@ -73,20 +68,27 @@ class Ram (size: Int, filename: Option[String]) extends CModule {
   filename.map { loadMemoryFromFileInline(mem, _) }
 }
 
-class Iommu extends CModule {
+class Iommu (filename: Option[String]) extends CModule {
   val io = IO(new CBundle {
     val cpu = new RamIo
     val ram = Flipped(new RamIo)
     val halt = Output(Bool())
   })
 
-  val clk = RegInit(0.U(64.W))
+  val clk = RegInit(0.U(p.xlen.W))
+  val infile = filename.map { file =>
+    val mem = Mem(256, Byte)
+    loadMemoryFromFileInline(mem, file)
+    mem
+  }
+
+  val infilePtr = RegInit(0.U(p.xlen.W))
 
   io.ram.address := io.cpu.address
   io.halt := false.B
   val lastAddress = CRegNext(io.cpu.address)
   val vdata = MuxLookup(lastAddress(2, 0), 0.U, Seq(
-    0.U -> 0.U, // TODO: read a byte from cpuput
+    0.U -> infile.map(_(infilePtr)).getOrElse(0.U),
     4.U -> clk(7, 0),
     5.U -> clk(15, 8),
     6.U -> clk(23, 16),
@@ -101,9 +103,18 @@ class Iommu extends CModule {
 
   when (ready) {
     clk := clk + 1.U
+    dprintf("clock", "current clock: %x", clk)
+
+    when (vread && !CRegNext(io.cpu.writeEnable) && lastAddress === 0x30000.U) {
+      infilePtr := infilePtr + 1.U
+    }
+
     when (vwrite && io.cpu.writeEnable) {
       when (io.cpu.address === 0x30000.U) {
-        printf("[iommu] %x (%c)\n", io.cpu.dataIn, io.cpu.dataIn)
+        if (!p.debug.enable) {
+          printf("%c", io.cpu.dataIn);
+        }
+        dprintf("iommu", "%x (%c)", io.cpu.dataIn, io.cpu.dataIn)
       }.elsewhen (io.cpu.address === 0x30004.U) {
         io.halt := true.B
       }.otherwise {

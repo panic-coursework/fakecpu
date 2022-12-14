@@ -56,6 +56,12 @@ class CValid[T <: Data](gen: T) extends CBundle {
 
 object CValid {
   def apply[T <: Data](gen: T) = new CValid(gen)
+  def bind[T <: Data](valid: Bool, bits: T): CValid[T] = {
+    val w = Wire(CValid(chiselTypeOf(bits)))
+    w.valid := valid
+    w.bits := bits
+    w
+  }
 }
 
 class CQueueIO[T <: Data, U <: Data](val w: Width, private val gen: T) extends CBundle {

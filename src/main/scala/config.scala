@@ -4,7 +4,27 @@ import chisel3._
 
 object p {
   val isFirrtlBuggy = true
-  val debug = false
+  val mode = "codegen"
+  object codegen {
+    def module = new Cpu
+    val options = Array("--emission-options=disableMemRandomization,disableRegisterRandomization")
+  }
+  object debug {
+    val enable = false
+    val units = Map(
+      "alu"    -> true,
+      "cache"  -> true,
+      "cdb"    -> true,
+      "clock"  -> true,
+      "commit" -> true,
+      "ifetch" -> true,
+      "iommu"  -> true,
+      "lb"     -> false,
+      "lsq"    -> true,
+      "rob"    -> true,
+      "rs"     -> true,
+    )
+  }
 
   val wordSize = 4
   val xlen = 32
@@ -20,6 +40,8 @@ object p {
       val ifetch = 2
     }
   }
+
+  val icache = new CacheParameters(1, 5, 5, true)
 
   val robWidth = 5
   val robLines = 1 << robWidth

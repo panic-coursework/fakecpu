@@ -16,12 +16,12 @@ object AluOp {
   val and  = "b00111".U
   val sub  = "b01000".U
   val sra  = "b01101".U
-  val beq  = "b11000".U
-  val bne  = "b11001".U
-  val blt  = "b11100".U
-  val bge  = "b11101".U
-  val bltu = "b11110".U
-  val bgeu = "b11111".U
+  val beq  = "b10000".U
+  val bne  = "b10001".U
+  val blt  = "b10100".U
+  val bge  = "b10101".U
+  val bltu = "b10110".U
+  val bgeu = "b10111".U
 }
 
 import AluOp._
@@ -64,14 +64,11 @@ class ArithmeticLogicUnit extends CModule {
       blt  -> pad(lhs.asSInt < rhs.asSInt),
       bge  -> pad(lhs.asSInt >= rhs.asSInt),
       bltu -> pad(lhs < rhs),
-      bgeu -> pad(rhs >= lhs),
+      bgeu -> pad(lhs >= rhs),
     ))
 
-    when (CRegNext(io.req.valid)) {
-      dprintf(p"[alu] resp: $resp\n")
-    }
     when (io.req.valid) {
-      dprintf(p"[alu] req: ${io.req.bits}\n")
+      dprintf("alu", p"req: ${io.req.bits}")
     }
   }.otherwise {
     io <> DontCare

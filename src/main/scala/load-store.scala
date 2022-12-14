@@ -48,10 +48,10 @@ class LoadStoreQueue extends CModule {
   })
   queue.clear := io.clear
 
-  val offset = RegInit(0.U(2.W))
+  val offset = RegInit(0.U(3.W))
   val lastOffset = CRegNext(offset)
   val lastRamFire = CRegNext(io.ram.req.fire)
-  val loadValue = VecInit(Seq.fill(4)(0.U(8.W)))
+  val loadValue = RegInit(VecInit(Seq.fill(4)(0.U(8.W))))
   val broadcast = OutputReg(io.broadcast)
 
   when (ready) {
@@ -70,11 +70,19 @@ class LoadStoreQueue extends CModule {
     queue.io.deq.ready := false.B
     queue.io.flush := false.B
 
+    def loadComplete () = {
+      offset := 0.U
+      (0 until p.wordSize).foreach(loadValue(_) := 0.U)
+      queue.io.deq.ready := true.B
+    }
+
     when (queue.io.deq.valid) {
       val line = queue.io.deq.bits
       val max = lsSize(line.size)
       when (line.op === LsQueueOp.load) {
-        when (offset < max) {
+        when (line.cleared) {
+          loadComplete()
+        }.elsewhen (offset < max) {
           io.ram.req.valid            := true.B
           io.ram.req.bits.writeEnable := false.B
           io.ram.req.bits.address     := line.addr + offset
@@ -82,14 +90,16 @@ class LoadStoreQueue extends CModule {
             offset := offset + 1.U
           }
           when (lastRamFire) {
-            loadValue(offset) := io.ram.resp
+            loadValue(CRegNext(offset)) := io.ram.resp
           }
         }.otherwise {
-          offset := 0.U
-          queue.io.deq.ready := true.B
+          loadComplete()
+
+          val value = cat(line.size)
+          dprintf("lsq", p"loaded $value from addr ${line.addr} size $max")
           broadcast.valid      := true.B
           broadcast.bits.id    := line.rob
-          broadcast.bits.value := cat(line.size)
+          broadcast.bits.value := value
         }
       }.otherwise {
         when (offset < max) {
@@ -104,6 +114,7 @@ class LoadStoreQueue extends CModule {
         }.otherwise {
           offset := 0.U
           queue.io.deq.ready := true.B
+          dprintf("lsq", p"stored ${line.value} to addr ${line.addr} size $max")
         }
       }
     }
@@ -114,8 +125,10 @@ class LoadStoreQueue extends CModule {
 
   def cat (size: UInt): UInt = {
     val value = WireDefault(loadValue)
-    val byte = io.ram.resp
-    value(lsSize(size) - 1.U) := byte
+    when (lastRamFire) {
+      val byte = io.ram.resp
+      value(lsSize(size) - 1.U) := byte
+    }
     val word = WireDefault((0 until p.wordSize).map(value(_)).reverse.reduceLeft(_ ## _))
     when (size === LoadStoreSize.byte) {
       word := (value(0).asSInt pad p.xlen).asUInt

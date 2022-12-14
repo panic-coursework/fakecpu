@@ -32,7 +32,7 @@ begin
 		rst			<=	1'b1;
 		rst_delay	<=	1'b1;
 	end
-	else 
+	else
 	begin
 		rst_delay	<=	1'b0;
 		rst			<=	rst_delay;
@@ -97,19 +97,19 @@ wire						program_finish;
 
 reg                         q_hci_io_en;
 
-cpu cpu0(
-	.clk_in(clk),
-	.rst_in(rst | program_finish),
-	.rdy_in(cpu_rdy),
+Cpu cpu0(
+	.clock(clk),
+	.reset(rst | program_finish),
+	.ready(cpu_rdy),
 
-	.mem_din(cpu_ram_din),
-	.mem_dout(cpu_ram_dout),
-	.mem_a(cpu_ram_a),
-	.mem_wr(cpu_ram_wr),
-	
-	.io_buffer_full(hci_io_full),
+	.io_ram_dataIn(cpu_ram_din),
+	.io_ram_dataOut(cpu_ram_dout),
+	.io_ram_address(cpu_ram_a),
+	.io_ram_writeEnable(cpu_ram_wr),
 
-	.dbgreg_dout(cpu_dbgreg_dout)
+	.io_ioBufferFull(hci_io_full),
+
+	.io_debugReg(cpu_dbgreg_dout)
 );
 
 hci #(.SYS_CLK_FREQ(SYS_CLK_FREQ),
@@ -132,7 +132,7 @@ hci #(.SYS_CLK_FREQ(SYS_CLK_FREQ),
 	.io_wr(hci_io_wr),
 	.io_full(hci_io_full),
 
-	.program_finish(program_finish), 
+	.program_finish(program_finish),
 
 	.cpu_dbgreg_din(cpu_dbgreg_dout)	// demo
 );

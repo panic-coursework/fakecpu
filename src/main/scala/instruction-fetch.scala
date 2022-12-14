@@ -18,10 +18,10 @@ class InstructionFetchUnit extends CModule {
     val regQuery = Flipped(new RegQuery)
     val bpQuery = Flipped(new BpQuery)
 
-    val pc = Output(Address)
+    val pc = if (p.debug.enable) Some(Output(Address)) else None
   })
   val pc = RegInit(Address, p.initialPc)
-  io.pc := pc
+  io.pc.map(_ := pc)
 
   when (ready) {
     io.icache.address.bits := pc
@@ -42,27 +42,29 @@ class InstructionFetchUnit extends CModule {
 
     io.regQuery.req := rs1
     io.bpQuery.pc := pc
-    val predictedAddr = io.regQuery.resp.value + immI.asUInt
+    val predictedAddr = alignPc(io.regQuery.resp.value + immI.asUInt)
     val take = io.bpQuery.take
-    val takePc = immB.asUInt + pc
+    val takePc = alignPc(immB.asUInt + pc)
     val nextPc = pc + 4.U
     val next = MuxCase(nextPc, Seq(
       (opcode === BRANCH && take) -> takePc,
-      (opcode === JAL) -> (pc + immJ.asUInt),
+      (opcode === JAL) -> alignPc(pc + immJ.asUInt),
+      (opcode === JALR) -> predictedAddr,
     ))
-    when (opcode === BRANCH) {
-      dprintf(p"take? $take, immB $immB, takePc $takePc\n")
-    }
     val fallback = Mux(take, nextPc, takePc)
 
     val branch = io.next.bits.branch
     branch.predictedAddr := predictedAddr
-    branch.history := io.bpQuery.history
     branch.predictedTake := take
-    branch.fallback := fallback
+    branch.history       := io.bpQuery.history
+    branch.fallback      := fallback
 
-    when (io.next.ready && (io.clear.valid || io.icache.address.fire)) {
-      dprintf(p"pc: $pc, instruction: $ins, next pc: $next, clear? ${io.clear.valid}(${io.clear.bits})\n")
+    when ((io.next.ready && io.icache.address.fire) || io.clear.valid) {
+      dprintf("ifetch", "pc: %x", pc);
+      dprintf("ifetch", p"instruction: $ins, next pc: $next, clear? ${io.clear.valid} (${io.clear.bits})")
+      when (opcode === BRANCH) {
+        dprintf("ifetch", p"take? $take, immB $immB, takePc $takePc")
+      }
       pc := Mux(io.clear.valid, io.clear.bits, next)
     }
   }.otherwise {
