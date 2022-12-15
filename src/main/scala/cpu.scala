@@ -13,7 +13,9 @@ class Cpu extends CModule {
     val ram = Flipped(new RamIo)
     val ioBufferFull = Input(Bool())
     val debugReg = Output(Word)
-    val pc = if (p.debug.enable) Some(Output(Address)) else None
+    val pcSel = Input(Bool())
+    val pc = Output(Address)
+    val full = Output(UInt(5.W))
   })
   val cdb = Wire(CdbReceiver)
   val clear = Wire(CValid(Address))
@@ -23,7 +25,7 @@ class Cpu extends CModule {
   io.debugReg := 0.U
 
   val ramCtrl = CModule(new RamController)
-  ramCtrl.io.ram <> io.ram
+  ramCtrl.io.ram          <> io.ram
   ramCtrl.io.ioBufferFull := io.ioBufferFull
 
   val regfile = CModule(new RegisterFile)
@@ -39,7 +41,6 @@ class Cpu extends CModule {
   ifetch.io.icache   <> icache.io.interface
   ifetch.io.regQuery <> regfile.io.query(p.reg.query.ifetch)
   ifetch.io.bpQuery  <> bp.io.query
-  ifetch.io.pc.map(_ <> io.pc.get)
 
   val alu = CModule(new ArithmeticLogicUnit)
   cdb(p.cdb.alu) := alu.io.resp
@@ -48,6 +49,7 @@ class Cpu extends CModule {
   lsq.io.clear   := clearFlag
   lsq.io.ram     <> ramCtrl.io.data
   cdb(p.cdb.lsq) := lsq.io.broadcast
+  val lsqFull = lsq.io.full
 
   val rob = CModule(new ReorderBuffer)
   clear := rob.io.clear
@@ -55,6 +57,7 @@ class Cpu extends CModule {
   rob.io.setReg     <> regfile.io.update
   rob.io.bpFeedback <> bp.io.feedback
   rob.io.lsqEnq     <> lsq.io.enq(p.lsq.enq.rob)
+  val robFull = !rob.io.enq.ready
 
   val rs = CModule(new RsUnit)
   rs.io.cdb       := cdb
@@ -65,6 +68,7 @@ class Cpu extends CModule {
   rs.io.lbQuery   <> rob.io.lbQuery
   rs.io.robDeq    := rob.io.deqPtr
   rs.io.lbUnblock := rob.io.lbUnblock
+  val rsFull = rs.io.full
 
   val idecode = CModule(new InstructionDecoder)
   idecode.io.input       <> ifetch.io.next
@@ -76,6 +80,9 @@ class Cpu extends CModule {
   idecode.io.regQuery(0) <> regfile.io.query(p.reg.query.idecode0)
   idecode.io.regQuery(1) <> regfile.io.query(p.reg.query.idecode1)
   idecode.io.regBorrow   <> regfile.io.borrow
+
+  io.pc := Mux(io.pcSel, ifetch.io.pc, rob.io.pc)
+  io.full := lsqFull ## robFull ## rsFull
 
   when (ready) {
     for (i <- 0 until p.cdb.lines) {

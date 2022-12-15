@@ -13,6 +13,7 @@ object p {
     val enable = false
     val units = Map(
       "alu"    -> true,
+      "bp"     -> true,
       "cache"  -> true,
       "cdb"    -> true,
       "clock"  -> true,
@@ -39,11 +40,13 @@ object p {
       val idecode1 = 1
       val ifetch = 2
     }
+    val mem = true
   }
 
   val icache = new CacheParameters(1, 5, 5, true)
+  val initCache = true
 
-  val robWidth = 5
+  val robWidth = 4
   val robLines = 1 << robWidth
   val rsWidth = 4
   val rsLines = 1 << rsWidth
@@ -72,11 +75,11 @@ object p {
   // branch predictor
   object bp {
     object history {
-      val width = 4
+      val width = 3
       val lines = 1 << width
     }
     object pc {
-      val width = 6
+      val width = 7
       val skip = 2
       val lines = 1 << width
     }
@@ -84,6 +87,7 @@ object p {
       val bits = 2
       val threshold = 2
       val max = (1 << bits) - 1
+      val init = false
     }
   }
 

@@ -32,7 +32,7 @@ To run simulation manually:
 
 If you want to play with the code, it is recommended that you spin up a sbt
 daemon by running "sbt" and type in "run" each time you modify the code,
-instead of running "sbt run" each time to take full advantage of incremental
+instead of running "sbt run" each time, to take full advantage of incremental
 compilation provided by sbt.
 
 
@@ -45,6 +45,51 @@ compilation provided by sbt.
 3. Set mode to "codegen" in config.scala and make sure codegen.module is
    "new Cpu" (not "new TestModule").
 4. Generate Verilog code using the command "sbt run".
-5. Copy the Verilog files in src/main/resources EXCEPT testbench.v, as well as
+5. Copy the Verilog files in src/main/resources EXCEPT testbench.v, and copy
    Cpu.v generated in step 4, to the Vivado project you have just created.
 6. Run synthesis in Vivado.
+
+
++---------------+
+| TESTING NOTES |
++---------------+
+
+Icarus Verilog is unable to simulate some patterns in the CPU design, so please
+use Verilator.
+
+The "statement_test" testpoint would fail if several other program is ran
+before it, even after the board being reset manually; it might be a bug in the
+reset mechanism. However, I could not reproduce the bug in simulation. If you
+see the test failing, consider re-run the test immediately after a fresh
+program to the board.
+
+
++-----------+
+| HCI NOTES |
++-----------+
+
+Some modifications are made to the HCI to better accomodate debugging.
+
+The 7-segment display is used to show the current program counter. You need to
+press the left button (BTNL) to update the display (or else it flashes too
+quickly that you won't be able to see anything.) There are two sources of PC
+data, and switch SW1 is used to control which is shown. Turn off SW1 to show
+the last PC committed by the reorder buffer; turn on to show the current PC
+being fetched by the instruction fetch unit. In RV32, the address is 32-bit,
+but the display could only show a 16-bit hexadecimal number. SW0 is used to
+toggle which 16 bits are shown. Switch on to see the high 16 bits (which are
+usually just zeroes), and switch off to see low 16 bits. The switches will not
+trigger display updates; you need to press the left button after switching.
+Note that the last committed PC is initialized to be 0xDEADBEEF.
+
+The LEDs are used to show the status of some design units:
+
+LD0 on --> debug break
+LD1 on --> io buffer full
+LD2 on --> store buffer full
+LD3 on --> load buffer full
+LD4 on --> reservation station (for ALU) full
+LD5 on --> reorder buffer full
+LD6 on --> load/store queue full
+
+The central button (BTNC) is used as the reset button as usual.

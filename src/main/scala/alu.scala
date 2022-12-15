@@ -40,6 +40,7 @@ class ArithmeticLogicUnit extends CModule {
   })
 
   val resp = OutputReg(io.resp)
+  when (reset.asBool)(resp.valid := false.B)
 
   def pad (b: Bool) = 0.U((p.xlen - 1).W) ## b
 

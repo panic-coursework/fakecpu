@@ -59,6 +59,14 @@ class Cache(implicit cp: CacheParameters) extends CModule {
   val sets = Mem(cp.nLines, new CacheLine)
   val data = Mem(cp.nLines * cp.nBytesInLine, Byte)
 
+  if (p.initCache) {
+    when (reset.asBool) {
+      for (i <- 0 until cp.nLines) {
+        sets(i).valid := false.B
+      }
+    }
+  }
+
   val idle :: fetching :: Nil = Enum(2)
   val state = RegInit(idle)
 
@@ -66,8 +74,10 @@ class Cache(implicit cp: CacheParameters) extends CModule {
   val lastProgress = CRegNext(fetchProgress)
 
   val addr = io.interface.address.bits.asTypeOf(new CacheAddress)
-  val lastIndex = CRegNext(addr.index)
-  val lastAddr = CRegNext(io.interface.address.bits)
+  val lastAddr = RegInit(Address, 0.U(p.xlen.W))
+  when (ready && io.interface.address.valid) {
+    lastAddr := io.interface.address.bits
+  }
   val offset = (0 until p.wordSize).map { (x: Int) => addr.index ## (addr.offset + x.U) }.reverse
   io.interface.dataRead := Cat(offset.map { data.read(_) })
 
@@ -108,8 +118,9 @@ class Cache(implicit cp: CacheParameters) extends CModule {
       io.ram.req.noenq()
     }
 
-    when (CRegNext(io.ram.req.fire)) {
-      dprintf("cache", p"progress: $lastProgress, resp: ${io.ram.resp}")
+    when (CRegNextInit(io.ram.req.fire, false.B)) {
+      val lastIndex = CRegNext(addr.index)
+      dprintf("cache", p"index: $lastIndex, progress: $lastProgress, resp: ${io.ram.resp}")
       data.write(lastIndex ## lastProgress, io.ram.resp)
     }
   }.otherwise {

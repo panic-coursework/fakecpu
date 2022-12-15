@@ -12,6 +12,8 @@ object RobOp {
 class RobLine extends CBundle {
   val valid = Bool()
 
+  val pc = Address
+
   val op = RobOp.T
   val value = CValid(Word)
 
@@ -43,6 +45,7 @@ class BranchInfo extends CBundle {
 }
 
 class RobEnqueue extends CBundle {
+  val pc = Address
   val op = RobOp.T
   val value = CValid(Word)
   val dest = CValid(RegId)
@@ -66,6 +69,8 @@ class ReorderBuffer extends CModule {
     val lbUnblock = Output(CValid(RobId))
     val sbWrite = Input(CValid(new StoreBufferWrite))
     val decodeQuery = Vec(p.robQueryLines, new RobQuery)
+
+    val pc = Output(Address)
   })
 
   val buffer = CModule(new CQueue(p.robWidth, new RobLine) {
@@ -103,7 +108,7 @@ class ReorderBuffer extends CModule {
       line.value.bits  := sbWrite.bits.value
     }
 
-    (0 until p.robQueryLines).foreach { i: Int =>
+    for (i <- 0 until p.robQueryLines) {
       val query = decodeQuery(i)
       query.resp := Mux(
         query.req === enq_ptr.value && io.enq.fire,
@@ -141,11 +146,17 @@ class ReorderBuffer extends CModule {
   io.lbUnblock.valid := false.B
   io.lbUnblock.bits  := DontCare
 
-  val clear = OutputRegInit(io.clear, CValid(Address).Lit(_.valid -> false.B, _.bits -> 0.U))
+  val clear = OutputReg(io.clear)
   val setReg = OutputReg(io.setReg)
   val bpFeedback = OutputReg(io.bpFeedback)
   val lsqEnq = OutputReg(io.lsqEnq.bits)
   val lsqEnqValid = OutputReg(io.lsqEnq.valid)
+  val pc = OutputRegInit(io.pc, 0xdeadbeefL.U(p.xlen.W))
+
+  when (reset.asBool) {
+    Seq(clear, setReg, bpFeedback).foreach(_.valid := false.B)
+    lsqEnqValid := false.B
+  }
 
   when (ready) {
     buffer.io.flush := clear.valid
@@ -166,6 +177,7 @@ class ReorderBuffer extends CModule {
       buffer.io.enq.bits  := enq
       io.enq.ready := buffer.io.enq.ready
 
+      enq.pc            := enqIn.pc
       enq.addr.valid    := false.B
       enq.addr.bits     := DontCare
       enq.value         := enqIn.value
@@ -199,6 +211,7 @@ class ReorderBuffer extends CModule {
       ((line.op =/= RobOp.store && line.op =/= RobOp.jalr) || line.addr.valid) &&
       (!lsqEnqValid || io.lsqEnq.ready)
     when (buffer.io.deq.fire) {
+      pc := line.pc
       dprintf("commit", p"id: ${buffer.deqPtr}, line: $line")
       when (line.op === RobOp.branch || line.op === RobOp.jalr) {
         // JAL / JALR
@@ -220,6 +233,7 @@ class ReorderBuffer extends CModule {
         )
         when (line.op === RobOp.branch) {
           bpFeedback.valid              := true.B
+          bpFeedback.bits.pc            := line.pc
           bpFeedback.bits.predictedTake := line.predictedTake
           bpFeedback.bits.actualTake    := line.value.bits
           bpFeedback.bits.history       := line.history

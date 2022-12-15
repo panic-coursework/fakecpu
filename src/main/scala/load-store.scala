@@ -33,6 +33,7 @@ class LoadStoreQueue extends CModule {
   val io = IO(new CBundle {
     val enq = Vec(p.lsq.enq.lines, Flipped(Decoupled(new LsQueuePayload)))
     val clear = Input(Bool())
+    val full = Output(Bool())
     val broadcast = Output(CdbSender)
     val ram = new RamInterface
   })
@@ -47,12 +48,13 @@ class LoadStoreQueue extends CModule {
     }
   })
   queue.clear := io.clear
+  io.full := !queue.io.enq.ready
 
   val offset = RegInit(0.U(3.W))
-  val lastOffset = CRegNext(offset)
-  val lastRamFire = CRegNext(io.ram.req.fire)
+  val lastRamFire = CRegNextInit(io.ram.req.fire, false.B)
   val loadValue = RegInit(VecInit(Seq.fill(4)(0.U(8.W))))
   val broadcast = OutputReg(io.broadcast)
+  when (reset.asBool)(broadcast.valid := false.B)
 
   when (ready) {
     queue.io.enq.noenq()

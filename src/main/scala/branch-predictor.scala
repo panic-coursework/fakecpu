@@ -30,15 +30,19 @@ class BranchPredictor extends CModule {
   io.query.history := history
   io.query.take := ram(history ## hash(io.query.pc)) >= p.bp.v.threshold.U
 
-  when (reset.asBool) {
-    for (i <- 0 until p.bp.history.lines * p.bp.pc.lines) {
-      ram(i) := p.bp.v.threshold.U
+  if (p.bp.v.init) {
+    when (reset.asBool) {
+      for (i <- 0 until p.bp.history.lines * p.bp.pc.lines) {
+        ram(i) := p.bp.v.threshold.U
+      }
     }
   }
 
   when (ready && io.feedback.valid) {
     val data = io.feedback.bits
-    val state = ram(data.history ## hash(data.pc))
+    val key = data.history ## hash(data.pc)
+    val state = ram(key)
+    dprintf("bp", p"updating prediction table for $key take ${data.actualTake}")
     when (data.actualTake) {
       when (state < p.bp.v.max.U) {
         state := state + 1.U

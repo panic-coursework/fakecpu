@@ -8,9 +8,17 @@ module riscv_top
 (
 	input wire 			EXCLK,
 	input wire			btnC,
+  input wire      btnL,
+  input wire      pcSel,
+  input wire      sw,
 	output wire 		Tx,
 	input wire 			Rx,
-	output wire			led
+	output wire			led,
+	output wire			led1,
+  output wire [6:0] seg,
+  output wire dp,
+  output wire [3:0] an,
+  output wire [4:0] full
 );
 
 localparam SYS_CLK_FREQ = 100000000;
@@ -73,6 +81,17 @@ wire        cpu_ram_wr;
 wire [ 7:0] cpu_ram_din;
 wire [ 7:0] cpu_ram_dout;
 wire		cpu_rdy;
+wire [31:0] cpu_pc_out;
+reg [15:0] seg_pc_in;
+reg d_btnL;
+
+always @(posedge clk) begin
+  if (btnL && !d_btnL) begin
+    if (sw) seg_pc_in <= cpu_pc_out[31:16];
+    else seg_pc_in <= cpu_pc_out[15:0];
+  end
+  d_btnL <= btnL;
+end
 
 wire [31:0] cpu_dbgreg_dout;
 
@@ -92,6 +111,7 @@ wire [ 7:0]					hci_io_din;
 wire [ 7:0]					hci_io_dout;
 wire 						hci_io_wr;
 wire 						hci_io_full;
+assign led1 = hci_io_full;
 
 wire						program_finish;
 
@@ -102,14 +122,26 @@ Cpu cpu0(
 	.reset(rst | program_finish),
 	.ready(cpu_rdy),
 
-	.io_ram_dataIn(cpu_ram_din),
-	.io_ram_dataOut(cpu_ram_dout),
+	.io_ram_dataIn(cpu_ram_dout),
+	.io_ram_dataOut(cpu_ram_din),
 	.io_ram_address(cpu_ram_a),
 	.io_ram_writeEnable(cpu_ram_wr),
 
 	.io_ioBufferFull(hci_io_full),
 
-	.io_debugReg(cpu_dbgreg_dout)
+	.io_debugReg(cpu_dbgreg_dout),
+  .io_pcSel(pcSel),
+  .io_full(full),
+  .io_pc(cpu_pc_out)
+);
+
+seg seg0(
+  .clock(clk),
+  .reset(rst),
+  .pc(seg_pc_in),
+  .seg(seg),
+  .dp(dp),
+  .an(an)
 );
 
 hci #(.SYS_CLK_FREQ(SYS_CLK_FREQ),

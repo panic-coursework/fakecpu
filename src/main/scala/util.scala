@@ -32,6 +32,16 @@ object CRegNext {
   }
 }
 
+object CRegNextInit {
+  def apply[T <: Data](next: T, init: T)(implicit ready: Bool): T = {
+    val reg = RegInit(init)
+    when (ready) {
+      reg := next
+    }
+    reg
+  }
+}
+
 object OutputReg {
   def apply[T <: Data](out: T): T = {
     val reg = Reg(chiselTypeOf(out))
@@ -71,17 +81,22 @@ class CQueueIO[T <: Data, U <: Data](val w: Width, private val gen: T) extends C
   val flush = Input(Bool())
 }
 
-class CQueue[T <: Data](val w: Int, val gen: T, val initFull: Boolean = false) extends CModule {
+class CQueue[T <: Data](val w: Int, val gen: T, val initFull: Boolean = false, initRam: => Option[Vec[T]] = None) extends CModule {
   val io = IO(new CQueueIO(w.W, gen))
   val entries = 1 << w
 
-  val ram = Mem(entries, gen)
+  val ram = initRam.map(RegInit(_)).getOrElse(Reg(Vec(entries, gen)))
   val enq_ptr = Counter(entries)
   val deq_ptr = Counter(entries)
   val maybe_full = RegInit(initFull.B)
   val ptr_match = enq_ptr.value === deq_ptr.value
   val empty = ptr_match && !maybe_full
   val full = ptr_match && maybe_full
+
+  // when (reset.asBool) {
+  //   enq_ptr.reset()
+  //   deq_ptr.reset()
+  // }
 
   when (ready) {
     when (io.enq.fire) {
@@ -97,7 +112,7 @@ class CQueue[T <: Data](val w: Int, val gen: T, val initFull: Boolean = false) e
     when (io.flush) {
       enq_ptr.reset()
       deq_ptr.reset()
-      maybe_full := false.B
+      maybe_full := initFull.B
     }
 
     io.deq.valid := !empty
@@ -109,4 +124,19 @@ class CQueue[T <: Data](val w: Int, val gen: T, val initFull: Boolean = false) e
   }.otherwise {
     io <> DontCare
   }
+}
+
+trait MemLike[T <: Data] {
+  def apply(i: Int): T
+  def apply(i: UInt): T
+}
+
+class MemLikeMem[T <: Data](val ram: Mem[T]) extends MemLike[T] {
+  def apply(i: Int) = ram(i)
+  def apply(i: UInt) = ram(i)
+}
+
+class VecLikeMem[T <: Data](val vec: Vec[T]) extends MemLike[T] {
+  def apply(i: Int) = vec(i)
+  def apply(i: UInt) = vec(i)
 }

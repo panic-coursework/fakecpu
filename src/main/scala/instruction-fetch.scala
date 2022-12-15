@@ -18,10 +18,10 @@ class InstructionFetchUnit extends CModule {
     val regQuery = Flipped(new RegQuery)
     val bpQuery = Flipped(new BpQuery)
 
-    val pc = if (p.debug.enable) Some(Output(Address)) else None
+    val pc = Output(Address)
   })
   val pc = RegInit(Address, p.initialPc)
-  io.pc.map(_ := pc)
+  io.pc := pc
 
   when (ready) {
     io.icache.address.bits := pc
@@ -63,7 +63,7 @@ class InstructionFetchUnit extends CModule {
       dprintf("ifetch", "pc: %x", pc);
       dprintf("ifetch", p"instruction: $ins, next pc: $next, clear? ${io.clear.valid} (${io.clear.bits})")
       when (opcode === BRANCH) {
-        dprintf("ifetch", p"take? $take, immB $immB, takePc $takePc")
+        dprintf("ifetch", p"take? $take, hist ${io.bpQuery.history}, immB $immB, takePc $takePc")
       }
       pc := Mux(io.clear.valid, io.clear.bits, next)
     }

@@ -43,7 +43,7 @@ class RamController extends CModule {
     arbiter.io.in(i) <> iface.req
     iface.resp := io.ram.dataOut
   }
-  val virtual = arbiter.io.out.bits.dataIn >= p.iommu.base.U
+  val virtual = arbiter.io.out.bits.address >= p.iommu.base.U
   arbiter.io.out.ready := !virtual || (!io.ioBufferFull && CRegNext(virtual))
   val req = arbiter.io.out.bits
   val fire = arbiter.io.out.fire
@@ -86,7 +86,7 @@ class Iommu (filename: Option[String]) extends CModule {
 
   io.ram.address := io.cpu.address
   io.halt := false.B
-  val lastAddress = CRegNext(io.cpu.address)
+  val lastAddress = CRegNextInit(io.cpu.address, 0.U(p.xlen.W))
   val vdata = MuxLookup(lastAddress(2, 0), 0.U, Seq(
     0.U -> infile.map(_(infilePtr)).getOrElse(0.U),
     4.U -> clk(7, 0),
@@ -105,7 +105,7 @@ class Iommu (filename: Option[String]) extends CModule {
     clk := clk + 1.U
     dprintf("clock", "current clock: %x", clk)
 
-    when (vread && !CRegNext(io.cpu.writeEnable) && lastAddress === 0x30000.U) {
+    when (vread && !CRegNextInit(io.cpu.writeEnable, false.B) && lastAddress === 0x30000.U) {
       infilePtr := infilePtr + 1.U
     }
 

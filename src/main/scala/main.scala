@@ -10,7 +10,7 @@ import chisel3.stage.ChiselStage
 class TestModule extends CModule {
   val io = IO(new CBundle {
     val halt = Output(Bool())
-    val pc = if (p.debug.enable) Some(Output(Address)) else None
+    val pc = Output(Address)
   })
   val cpu = CModule(new Cpu)
   val ram = CModule(new Ram(128 * 1024, Some("data.data")))
@@ -19,7 +19,8 @@ class TestModule extends CModule {
   cpu.io.ram <> iommu.io.cpu
   ram.io <> iommu.io.ram
   cpu.io.ioBufferFull := false.B
-  io.pc.map(_ := cpu.io.pc.get)
+  cpu.io.pcSel := false.B
+  io.pc := cpu.io.pc
 }
 
 class Poc extends Module {

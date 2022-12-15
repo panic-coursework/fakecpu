@@ -34,7 +34,15 @@ class RegisterFile extends CModule {
     val clear = Input(Bool())
   })
 
-  val regs = Mem(p.reg.count, new Register)
+  val regs = if (p.reg.mem) {
+    new MemLikeMem(Mem(p.reg.count, new Register))
+  } else {
+    new VecLikeMem(RegInit(VecInit(List.fill(p.reg.count)((new Register).Lit(
+      _.valid -> true.B,
+      _.src -> 0.U,
+      _.value -> 0.U,
+    )))))
+  }
 
   val incoming = Wire(new Register)
   incoming.valid := true.B
@@ -51,11 +59,13 @@ class RegisterFile extends CModule {
 
   val ramAccessors = (0 until p.reg.count).map(regs(_))
 
-  when (reset.asBool) {
-    for (reg <- ramAccessors) {
-      reg.valid := true.B
-      reg.src := 0.U
-      reg.value := 0.U
+  if (p.reg.mem) {
+    when (reset.asBool) {
+      for (reg <- ramAccessors) {
+        reg.valid := true.B
+        reg.src := 0.U
+        reg.value := 0.U
+      }
     }
   }
 

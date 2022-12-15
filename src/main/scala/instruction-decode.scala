@@ -23,17 +23,18 @@ class InstructionDecoder extends CModule {
   val rob = OutputReg(io.rob.bits)
   val robId = Mux(io.rob.fire, io.robEnqPtr + 1.U, io.robEnqPtr)
   val opRsValid = RegInit(true.B)
+  val lastInputValid = RegInit(false.B)
 
   when (ready) {
-    io.input.ready := io.rs.ready && io.rob.ready
+    io.input.ready := (io.rs.ready || !opRsValid) && io.rob.ready
 
     io.regBorrow.valid := false.B
     io.regBorrow.bits := DontCare
 
     val fire = io.input.fire
-    val lastInputValid = CRegNext(io.input.valid)
+    when (io.input.ready)(lastInputValid := io.input.valid)
     io.rs.valid := lastInputValid && io.rob.ready && opRsValid
-    io.rob.valid := lastInputValid && io.rs.ready
+    io.rob.valid := lastInputValid && (io.rs.ready || !opRsValid)
 
     when (lastInputValid && opRsValid && !io.input.ready) {
       for (i <- 0 until p.cdb.lines) {
@@ -91,6 +92,7 @@ class InstructionDecoder extends CModule {
       rs.size   := funct3
       rs.dest   := robId
       rs.offset := DontCare
+      rob.pc          := io.input.bits.pc
       rob.op          := robOp
       rob.value.valid := false.B
       rob.dest.bits   := rd
