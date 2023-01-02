@@ -61,8 +61,12 @@ wire 						ram_en;
 wire [RAM_ADDR_WIDTH-1:0]	ram_a;
 wire [ 7:0]					ram_dout;
 
+wire ram_ready;
+
 ram #(.ADDR_WIDTH(RAM_ADDR_WIDTH))ram0(
 	.clk_in(clk),
+	.reset(rst | program_finish),
+	.ready(ram_ready),
 	.en_in(ram_en),
 	.r_nw_in(~cpumc_wr),
 	.a_in(ram_a),
@@ -120,7 +124,7 @@ reg                         q_hci_io_en;
 Cpu cpu0(
 	.clock(clk),
 	.reset(rst | program_finish),
-	.ready(cpu_rdy),
+	.ready(cpu_rdy && ram_ready),
 
 	.io_ram_dataIn(cpu_ram_dout),
 	.io_ram_dataOut(cpu_ram_din),
