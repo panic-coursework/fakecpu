@@ -93,11 +93,6 @@ class CQueue[T <: Data](val w: Int, val gen: T, val initFull: Boolean = false, i
   val empty = ptr_match && !maybe_full
   val full = ptr_match && maybe_full
 
-  // when (reset.asBool) {
-  //   enq_ptr.reset()
-  //   deq_ptr.reset()
-  // }
-
   when (ready) {
     when (io.enq.fire) {
       ram(enq_ptr.value) := io.enq.bits

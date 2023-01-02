@@ -30,6 +30,11 @@ class BranchPredictor extends CModule {
   io.query.history := history
   io.query.take := ram(history ## hash(io.query.pc)) >= p.bp.v.threshold.U
 
+  if (p.iverilog) {
+    // branch predicting just doesn't work on iverilog.
+    io.query.take := true.B
+  }
+
   if (p.bp.v.init) {
     when (reset.asBool) {
       for (i <- 0 until p.bp.history.lines * p.bp.pc.lines) {

@@ -92,8 +92,8 @@ class RsQueue[T <: HasRegisters](w: Int, gen: T) extends CModule {
     val enq = Flipped(Decoupled(gen))
     val deq = Decoupled(gen)
     val robDeq = Input(RobId)
-    val lbBlock = if (gen.isInstanceOf[LoadBuffer]) Some(Input(CValid(RobId))) else None
-    val lbUnblock = if (gen.isInstanceOf[LoadBuffer]) Some(Input(Vec(2, CValid(RobId)))) else None
+    val lbBlock = if (gen.isInstanceOf[LoadBuffer] && p.loadOoO) Some(Input(CValid(RobId))) else None
+    val lbUnblock = if (gen.isInstanceOf[LoadBuffer] && p.loadOoO) Some(Input(Vec(2, CValid(RobId)))) else None
   })
 
   val entries = 1 << w
@@ -134,11 +134,15 @@ class RsQueue[T <: HasRegisters](w: Int, gen: T) extends CModule {
           line._1.bits.valueRecords.map { _.valid }.reduceLeft(_ & _) &
           (if (gen.isInstanceOf[LoadBuffer]) {
             val lb = line._1.bits.asInstanceOf[LoadBuffer]
-            // virtual loads must be in-order
-            val virtualValid = lb.addr.value < p.iommu.base.U || lb.dest === io.robDeq
-            // prevention of dead loops
-            val notBlocked = !lb.blocked.valid
-            virtualValid && notBlocked
+            if (!p.loadOoO) {
+              lb.dest === io.robDeq
+            } else {
+              // virtual loads must be in-order
+              val virtualValid = lb.addr.value < p.iommu.base.U || lb.dest === io.robDeq
+              // prevention of dead loops
+              val notBlocked = !lb.blocked.valid
+              virtualValid && notBlocked
+            }
           } else true.B)
         ) -> CValid.bind(true.B, line._2.U(w.W))
       },
@@ -197,9 +201,9 @@ class RsUnit extends CModule {
     val lb = Decoupled(new LsQueuePayload)
     val sb = Output(CValid(new StoreBufferWrite))
 
-    val lbQuery = Flipped(new LoadBufferQuery)
+    val lbQuery = if (p.loadOoO) Some(Flipped(new LoadBufferQuery)) else None
     val robDeq = Input(RobId)
-    val lbUnblock = Input(CValid(RobId))
+    val lbUnblock = if (p.loadOoO) Some(Input(CValid(RobId))) else None
 
     val full = Output(UInt(3.W))
   })
@@ -207,7 +211,7 @@ class RsUnit extends CModule {
   val alu = CModule(new RsQueue(p.rsWidth, new ReservationStationAlu))
   val lb = CModule(new RsQueue(p.loadBufferWidth, new LoadBuffer))
   val sb = CModule(new RsQueue(p.storeBufferWidth, new StoreBuffer))
-  lb.io.lbUnblock.map(_(0) := io.lbUnblock)
+  lb.io.lbUnblock.map(_(0) := io.lbUnblock.get)
   Seq(alu, lb, sb).foreach { q =>
     q.reset        := reset.asBool || io.clear
     q.io.enq.valid := false.B
@@ -268,13 +272,13 @@ class RsUnit extends CModule {
       io.sb.bits := DontCare
       io.lb.valid := false.B
       io.lb.bits := DontCare
-      io.lbQuery <> DontCare
+      io.lbQuery.map(_ <> DontCare)
       aluOut.valid := false.B
       sbOut.valid := false.B
       lbOutValid := false.B
       types.foreach(_._2.io.deq.ready := false.B)
-      lb.io.lbBlock.get := lb.io.deq.bits.blocked
-      lb.io.lbUnblock.get(1) := CValid.bind(false.B, 0.U(p.robWidth.W))
+      lb.io.lbBlock.map(_ := lb.io.deq.bits.blocked)
+      lb.io.lbUnblock.map(_(1) := CValid.bind(false.B, 0.U(p.robWidth.W)))
     }.otherwise {
       alu.io.deq.ready := true.B
       aluOut.valid := alu.io.deq.valid
@@ -290,13 +294,15 @@ class RsUnit extends CModule {
       sbOut.bits.id    := sbDeq.dest
       sbOut.bits.addr  := sbDeq.addr.value + sbDeq.offset
       sbOut.bits.value := sbDeq.value.value
-      lb.io.lbUnblock.get(1) := CValid.bind(sb.io.deq.fire, sbDeq.dest)
+      lb.io.lbUnblock.map(_(1) := CValid.bind(sb.io.deq.fire, sbDeq.dest))
 
       val lbDeq = lb.io.deq.bits
       val lbAddr = lbDeq.addr.value + lbDeq.offset
-      io.lbQuery.id   := lbDeq.dest
-      io.lbQuery.addr := lbAddr
-      io.lbQuery.size := lbDeq.size
+      io.lbQuery.map { q =>
+        q.id := lbDeq.dest
+        q.addr := lbAddr
+        q.size := lbDeq.size
+      }
       when (io.lb.ready) {
         lbOut.op      := LsQueueOp.load
         lbOut.addr    := lbAddr
@@ -304,12 +310,12 @@ class RsUnit extends CModule {
         lbOut.rob     := lbDeq.dest
         lbOut.cleared := false.B
         lbOut.value   := DontCare
-        lb.io.deq.ready := !io.lbQuery.block.bits
-        lbOutValid := lb.io.deq.valid && !io.lbQuery.block.bits
-        lb.io.lbBlock.get := io.lbQuery.block
+        lb.io.deq.ready := !io.lbQuery.map(_.block.bits).getOrElse(false.B)
+        lbOutValid := lb.io.deq.valid && !io.lbQuery.map(_.block.bits).getOrElse(false.B)
+        lb.io.lbBlock.map(_ := io.lbQuery.get.block)
       }.otherwise {
         lb.io.deq.ready := false.B
-        lb.io.lbBlock.get := lb.io.deq.bits.blocked
+        lb.io.lbBlock.map(_ := lb.io.deq.bits.blocked)
       }
     }
   }.otherwise {

@@ -65,8 +65,8 @@ class ReorderBuffer extends CModule {
     val bpFeedback = Output(CValid(new BpFeedback))
     val lsqEnq = Decoupled(new LsQueuePayload)
 
-    val lbQuery = new LoadBufferQuery
-    val lbUnblock = Output(CValid(RobId))
+    val lbQuery = if (p.loadOoO) Some(new LoadBufferQuery) else None
+    val lbUnblock = if (p.loadOoO) Some(Output(CValid(RobId))) else None
     val sbWrite = Input(CValid(new StoreBufferWrite))
     val decodeQuery = Vec(p.robQueryLines, new RobQuery)
 
@@ -75,7 +75,7 @@ class ReorderBuffer extends CModule {
 
   val buffer = CModule(new CQueue(p.robWidth, new RobLine) {
     val update = IO(Input(CdbReceiver))
-    val lbQuery = IO(new LoadBufferQuery)
+    val lbQuery = if (p.loadOoO) Some(IO(new LoadBufferQuery)) else None
     val sbWrite = IO(Input(CValid(new StoreBufferWrite)))
     val decodeQuery = IO(Vec(p.robQueryLines, new RobQuery))
     val enqPtr = IO(Output(chiselTypeOf(enq_ptr.value)))
@@ -87,18 +87,18 @@ class ReorderBuffer extends CModule {
     // fixes that I could think of), so leave out some space
     io.enq.ready := enq_ptr.value + 1.U =/= deq_ptr.value
 
-    lbQuery.block := MuxCase(CValid.bind(false.B, 0.U(p.robWidth.W)), (0 until p.robLines).map { i: Int =>
+    lbQuery.map(_.block := MuxCase(CValid.bind(false.B, 0.U(p.robWidth.W)), (0 until p.robLines).map { i: Int =>
       val notInQueue = empty || (!full && Mux(
         enq_ptr.value > deq_ptr.value,
         i.U >= enq_ptr.value || i.U < deq_ptr.value,
         i.U >= enq_ptr.value && i.U < deq_ptr.value,
       ))
-      val afterQuery = (i.U - deq_ptr.value) >= (lbQuery.id - deq_ptr.value)
+      val afterQuery = (i.U - deq_ptr.value) >= (lbQuery.get.id - deq_ptr.value)
       val line = ram(i)
       val notStore = line.op =/= RobOp.store
-      val notOverlapping = line.addr.valid && !overlap(lbQuery.addr, lbQuery.size, line.addr.bits, line.size)
+      val notOverlapping = line.addr.valid && !overlap(lbQuery.get.addr, lbQuery.get.size, line.addr.bits, line.size)
       !(notInQueue || afterQuery || notStore || notOverlapping) -> CValid.bind(true.B, i.U(p.robWidth.W))
-    })
+    }))
 
     when (ready && sbWrite.fire) {
       val line = ram(sbWrite.bits.id)
@@ -137,14 +137,14 @@ class ReorderBuffer extends CModule {
     }
   })
 
-  io.lbQuery <> buffer.lbQuery
+  io.lbQuery.map(_ <> buffer.lbQuery.get)
   io.decodeQuery <> buffer.decodeQuery
   io.enqPtr <> buffer.enqPtr
   io.deqPtr <> buffer.deqPtr
   io.sbWrite <> buffer.sbWrite
   io.cdb <> buffer.update
-  io.lbUnblock.valid := false.B
-  io.lbUnblock.bits  := DontCare
+  io.lbUnblock.map(_.valid := false.B)
+  io.lbUnblock.map(_.bits  := DontCare)
 
   val clear = OutputReg(io.clear)
   val setReg = OutputReg(io.setReg)
@@ -260,8 +260,8 @@ class ReorderBuffer extends CModule {
         lsq.cleared := DontCare
         lsq.value   := line.value.bits
 
-        io.lbUnblock.valid := true.B
-        io.lbUnblock.bits  := buffer.deqPtr
+        io.lbUnblock.map(_.valid := true.B)
+        io.lbUnblock.map(_.bits  := buffer.deqPtr)
       }
       when (line.op === RobOp.unimp) {
         // unreachable

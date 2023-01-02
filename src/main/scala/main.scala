@@ -13,8 +13,8 @@ class TestModule extends CModule {
     val pc = Output(Address)
   })
   val cpu = CModule(new Cpu)
-  val ram = CModule(new Ram(128 * 1024, Some("data.data")))
-  val iommu = CModule(new Iommu(Some("infile.data")))
+  val ram = CModule(new Ram(p.testModule.ram.size, p.testModule.ram.dump))
+  val iommu = CModule(new Iommu(p.testModule.infile))
   io.halt := iommu.io.halt
   cpu.io.ram <> iommu.io.cpu
   ram.io <> iommu.io.ram
@@ -42,7 +42,7 @@ class Poc extends Module {
 }
 
 object Main extends App {
-  (new ChiselStage).emitVerilog(new Poc)
+  (new ChiselStage).emitVerilog(new Poc, Array("-X", "low"))
   p.mode match {
     case "codegen" =>
       (new ChiselStage).emitVerilog(p.codegen.module, p.codegen.options)

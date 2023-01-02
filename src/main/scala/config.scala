@@ -4,6 +4,7 @@ import chisel3._
 
 object p {
   val isFirrtlBuggy = true
+  val iverilog = false
   val mode = "codegen"
   object codegen {
     def module = new Cpu
@@ -26,6 +27,13 @@ object p {
       "rs"     -> true,
     )
   }
+  object testModule {
+    object ram {
+      val size = 128 * 1024
+      val dump = Some("data.data")
+    }
+    val infile = Some("infile.data")
+  }
 
   val wordSize = 4
   val xlen = 32
@@ -44,7 +52,7 @@ object p {
   }
 
   val icache = new CacheParameters(1, 5, 5, true)
-  val initCache = true
+  val initCache = iverilog || true
 
   val robWidth = 4
   val robLines = 1 << robWidth
@@ -54,6 +62,8 @@ object p {
   val loadBufferLines = 1 << loadBufferWidth
   val storeBufferWidth = 4
   val storeBufferLines = 1 << storeBufferWidth
+  // would cause ~15 ns of WNS if enabled
+  val loadOoO = false
 
   object cdb {
     val lines = 2
@@ -87,7 +97,7 @@ object p {
       val bits = 2
       val threshold = 2
       val max = (1 << bits) - 1
-      val init = false
+      val init = iverilog || false
     }
   }
 

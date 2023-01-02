@@ -85,7 +85,7 @@ class Cache(implicit cp: CacheParameters) extends CModule {
   val cacheHit = currentLine.valid && currentLine.tag === addr.tag
   io.interface.address.ready := cacheHit
 
-  val clearProgress = state === idle || io.interface.address.bits =/= lastAddr
+  val clearProgress = state === idle || io.interface.address.bits =/= lastAddr || CRegNextInit(false.B, true.B)
 
   when (ready) {
     when (io.interface.address.valid && !cacheHit) {

@@ -11,7 +11,7 @@ simulating, please edit config.scala to make sure flags are set properly. You
 will need to place the machine code to run in hexadecimal format on a file
 named "data.data" in the current working directory. Input is read from
 "infile.data" under cwd, also in hexadecimal format. These files are
-configurable from main.scala.
+configurable from config.scala, under p.testModule.
 
 To run simulation using chiseltest:
 
@@ -56,12 +56,6 @@ compilation provided by sbt.
 
 Icarus Verilog is unable to simulate some patterns in the CPU design, so please
 use Verilator.
-
-The "statement_test" testpoint would fail if several other program is ran
-before it, even after the board being reset manually; it might be a bug in the
-reset mechanism. However, I could not reproduce the bug in simulation. If you
-see the test failing, consider re-run the test immediately after a fresh
-program to the board.
 
 
 +-----------+

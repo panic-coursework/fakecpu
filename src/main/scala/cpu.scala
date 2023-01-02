@@ -65,9 +65,9 @@ class Cpu extends CModule {
   rs.io.alu       <> alu.io.req
   rs.io.sb        <> rob.io.sbWrite
   rs.io.lb        <> lsq.io.enq(p.lsq.enq.rs)
-  rs.io.lbQuery   <> rob.io.lbQuery
   rs.io.robDeq    := rob.io.deqPtr
-  rs.io.lbUnblock := rob.io.lbUnblock
+  rs.io.lbQuery.map(_ <> rob.io.lbQuery.get)
+  rs.io.lbUnblock.map(_ := rob.io.lbUnblock.get)
   val rsFull = rs.io.full
 
   val idecode = CModule(new InstructionDecoder)
